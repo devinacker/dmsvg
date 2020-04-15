@@ -89,11 +89,11 @@ class DrawMap():
 		self.svg = ElementTree.Element('svg')
 		self.svg.attrib['xmlns'] = "http://www.w3.org/2000/svg"
 		self.svg.attrib['viewBox'] = "%d %d %u %u" % (self.xmin - self.border, self.ymin - self.border, width, height)
-		self.svg.attrib['stroke'] = "#000"
+	#	self.svg.attrib['stroke'] = "#fff"
 
 		# define patterns for all flats in map
-		floors = set([s.tx_floor for s in self.edit.sectors])
 		defs = ElementTree.SubElement(self.svg, 'defs')
+		floors = set([s.tx_floor for s in self.edit.sectors])
 		for f in floors:
 			try:
 				img = wad.flats[f].to_Image()
@@ -115,6 +115,21 @@ class DrawMap():
 			image.attrib['width'] = str(img.width)
 			image.attrib['height'] = str(img.height)
 
+		# brightness filters
+		lights = set([s.light >> 3 for s in self.edit.sectors])
+		for light in lights:
+			filter = ElementTree.SubElement(defs, 'filter')
+			filter.attrib['id'] = "light" + str(light)
+			transfer = ElementTree.SubElement(filter, 'feComponentTransfer')
+			funcR = ElementTree.SubElement(transfer, 'feFuncR')
+			funcG = ElementTree.SubElement(transfer, 'feFuncG')
+			funcB = ElementTree.SubElement(transfer, 'feFuncB')
+			funcR.attrib['type'] = "linear"
+			# a lighting curve that i basically pulled out of my ass
+			funcR.attrib['slope'] = str(1.5 * (light/32)**2)
+			funcG.attrib = funcR.attrib
+			funcB.attrib = funcR.attrib
+
 		# add opaque background if specified
 		if not self.trans:
 			bg = ElementTree.SubElement(self.svg, 'rect')
@@ -130,9 +145,11 @@ class DrawMap():
 			return
 	
 		flat = None
+		light = None
 		if sector >= 0:
 			try:
 				flat = self.edit.sectors[sector].tx_floor
+				light = self.edit.sectors[sector].light >> 3
 			except IndexError:
 				pass
 		
@@ -158,6 +175,8 @@ class DrawMap():
 		path.attrib['d'] = d
 		if flat:
 			path.attrib['fill'] = "url(#%s)" % flat
+			if light:
+				path.attrib['filter'] = "url(#light%d)" % light
 		elif self.trans:
 			path.attrib['fill'] = "rgba(0,0,0,0)"
 		else:
