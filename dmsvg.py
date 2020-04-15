@@ -62,8 +62,9 @@ class DrawMap():
 	#
 	# size of border in map units
 	border = 8
-	# transparent background
-	trans = False
+	# background (None = transparent)
+	fill   = None
+	stroke = None
 	
 	def __init__(self, wad, mapname):
 		self.edit = MapEditor(wad.maps[mapname])
@@ -136,7 +137,10 @@ class DrawMap():
 		self.svg = ElementTree.Element('svg')
 		self.svg.attrib['xmlns'] = "http://www.w3.org/2000/svg"
 		self.svg.attrib['viewBox'] = "%d %d %u %u" % (self.xmin - self.border, self.ymin - self.border, width, height)
-	#	self.svg.attrib['stroke'] = "#fff"
+		if self.stroke:
+			self.svg.attrib['stroke'] = self.stroke
+		if self.fill:
+			self.svg.attrib['fill'] = self.fill
 
 		# define patterns for all flats in map
 		defs = ElementTree.SubElement(self.svg, 'defs')
@@ -178,10 +182,9 @@ class DrawMap():
 			funcB.attrib = funcR.attrib
 
 		# add opaque background if specified
-		if not self.trans:
+		if self.fill:
 			bg = ElementTree.SubElement(self.svg, 'rect')
-			bg.attrib['fill']   = "#fff"
-			bg.attrib['stroke'] = "#fff"
+			bg.attrib['stroke'] = self.fill # color the border too
 			bg.attrib['x'] = str(self.xmin - self.border)
 			bg.attrib['y'] = str(self.ymin - self.border)
 			bg.attrib['width'] = str(width)
@@ -224,10 +227,8 @@ class DrawMap():
 			path.attrib['fill'] = "url(#%s)" % flat
 			if light:
 				path.attrib['filter'] = "url(#light%d)" % light
-		elif self.trans:
+		elif not self.fill:
 			path.attrib['fill'] = "rgba(0,0,0,0)"
-		else:
-			path.attrib['fill'] = "#fff"
 	
 	def linesort(self, line):
 		# sort by the following, in order:
@@ -300,25 +301,23 @@ class DrawMap():
 
 def get_args():
 	ap = ArgumentParser()
-	ap.add_argument("filename", help="path to WAD file")
+	ap.add_argument("filenames", help="path to WAD file(s)", nargs='*')
 	ap.add_argument("map",      help="name of map (ex. MAP01, E1M1)")
 	
+	ap.add_argument("-o", "--output",
+	                help="output file name (default: based on WAD name)")
 	ap.add_argument("-b", "--border", type=int, default=DrawMap.border,
 	                help="size of border (default: %(default)s)")
-	ap.add_argument("-t", "--trans", action="store_true",
-	                help="make image background transparent")
+	ap.add_argument("-s", "--stroke", default=DrawMap.stroke,
+	                help="stroke color/pattern (ex. white, #FFFFFF) (default: none)")
+	ap.add_argument("-f", "--fill", default=DrawMap.fill,
+	                help="default fill color/pattern (ex. black, #000000) (default: none)")
 
 	if len(argv) < 3:
 		ap.print_help()
 		exit(-1)
 	
-	args = ap.parse_args()
-	
-	# apply optional arguments to DrawMap settings
-	DrawMap.border       = args.border
-	DrawMap.trans        = args.trans
-	
-	return args
+	return ap.parse_args()
 	
 if __name__ == "__main__":
 	print("dmsvg - Doom map SVG renderer")
@@ -326,17 +325,23 @@ if __name__ == "__main__":
 	
 	args = get_args()
 	
-	filename = args.filename
-	mapname  = args.map.upper()
+	filenames = args.filenames
+	mapname   = args.map.upper()
+	output    = args.output or "%s_%s.svg" % (filenames[-1], mapname)
 	
+	# apply optional arguments to DrawMap settings
+	DrawMap.border = args.border
+	DrawMap.stroke = args.stroke
+	DrawMap.fill   = args.fill
+	
+	# load specified WAD(s)
 	wad = WAD()
-	
-	try:
-		wad.from_file(filename)
-		
-	except AssertionError:
-		stderr.write("Error: Unable to load WAD file.\n")
-		exit(-1)
+	for filename in filenames:
+		try:
+			wad.from_file(filename)	
+		except AssertionError:
+			stderr.write("Error: Unable to load %s.\n" % filename)
+			exit(-1)
 	
 	if mapname not in wad.maps:
 		stderr.write("Error: Map %s not found in WAD.\n" % mapname)
@@ -344,7 +349,7 @@ if __name__ == "__main__":
 	
 	try:
 		draw = DrawMap(wad, mapname)
-		draw.save("%s_%s.svg" % (filename, mapname))
+		draw.save(output)
 	except ValueError as e:
 		stderr.write("Error: %s.\n" % e)
 		exit(-1)
