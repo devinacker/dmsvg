@@ -36,6 +36,26 @@ from base64 import b64encode
 from argparse import ArgumentParser
 from math import atan2, pi, inf
 
+class MapShape():
+	# store a shape and its approximate size, so we can draw largest ones first
+	# and also eliminate duplicate shapes in case we end up tracing something twice
+	def __init__(self, lines, sector):
+		self.lines = lines
+		self.sector = sector
+		
+		box_top    = min([line.point_top   for line in lines])
+		box_left   = min([line.point_left  for line in lines])
+		box_bottom = max([line.point_right for line in lines])
+		box_right  = max([line.point_right for line in lines])
+		self.box = (box_top, box_left, box_bottom, box_right)
+		self.box_area = (box_bottom - box_top) * (box_right - box_left)
+
+	def __eq__(self, other):
+		return self.box == other.box and self.lines == other.lines
+
+	def __lt__(self, other):
+		return self.box_area < other.box_area
+
 class DrawMap():
 	#
 	# default parameters (these can be changed from the command line)
@@ -72,8 +92,10 @@ class DrawMap():
 			vx_a = self.edit.vertexes[line.vx_a]
 			vx_b = self.edit.vertexes[line.vx_b]
 			
-			line.point_top   = min(vx_a.y, vx_b.y)
-			line.point_left  = min(vx_a.x, vx_b.x)
+			line.point_top    = min(vx_a.y, vx_b.y)
+			line.point_bottom = max(vx_a.y, vx_b.y)
+			line.point_left   = min(vx_a.x, vx_b.x)
+			line.point_right  = max(vx_a.x, vx_b.x)
 			
 			dy = vx_b.y - vx_a.y
 			dx = vx_b.x - vx_a.x
@@ -165,27 +187,27 @@ class DrawMap():
 			bg.attrib['width'] = str(width)
 			bg.attrib['height'] = str(height)
 
-	def draw_lines(self, lines, sector):
-		if len(lines) < 2:
+	def draw_lines(self, shape):
+		if len(shape.lines) < 2:
 			return
 	
 		flat = None
 		light = None
-		if sector >= 0:
+		if shape.sector >= 0:
 			try:
-				flat = self.edit.sectors[sector].tx_floor
-				light = self.edit.sectors[sector].light >> 3
+				flat = self.edit.sectors[shape.sector].tx_floor
+				light = self.edit.sectors[shape.sector].light >> 3
 			except IndexError:
 				pass
 		
-		if lines[0].vx_a in (lines[1].vx_a, lines[1].vx_b):
-			last_vx = self.edit.vertexes[lines[0].vx_b]
+		if shape.lines[0].vx_a in (shape.lines[1].vx_a, shape.lines[1].vx_b):
+			last_vx = self.edit.vertexes[shape.lines[0].vx_b]
 		else:
-			last_vx = self.edit.vertexes[lines[0].vx_a]
+			last_vx = self.edit.vertexes[shape.lines[0].vx_a]
 		
 		d = "M %d,%d " % (last_vx.x, last_vx.y)
 		
-		for line in lines:
+		for line in shape.lines:
 			vx_a = self.edit.vertexes[line.vx_a]
 			vx_b = self.edit.vertexes[line.vx_b]
 			if last_vx == vx_a:
@@ -214,9 +236,8 @@ class DrawMap():
 		# slope
 		return (line.point_left, line.point_top, line.slope)
 	
-	def trace_lines(self, line, sector=None, visited=None):
-		if visited is None:
-			visited = []
+	def trace_lines(self, line):
+		visited = []
 		
 		# first, which sector are we looking at?
 		two_sided = line.two_sided
@@ -249,23 +270,31 @@ class DrawMap():
 			# but don't use it for rendering empty space
 			sector = -1
 		
-		return visited, sector
+		return MapShape(visited, sector)
 	
-	def save(self, filename):		
+	def save(self, filename):
+		shapes = []
+		
 		for lines_left in self.lines_in_sector:
 			lines_left.sort(key = self.linesort)
 			while len(lines_left) > 0:
 				try:
-					visited, sector = self.trace_lines(lines_left[0])
-					self.draw_lines(visited, sector)
-					for line in visited:
+					shape = self.trace_lines(lines_left[0])
+					if shape not in shapes:
+						shapes.append(shape)
+					for line in shape.lines:
 						if line in lines_left:
 							lines_left.remove(line)
 							
 				except KeyboardInterrupt:
 					print("\nRendering canceled.")
 					exit(-1)
-				
+		
+		# draw shapes largest to smallest
+		shapes.sort(reverse = True)
+		for shape in shapes:
+			self.draw_lines(shape)
+		
 		ElementTree.ElementTree(self.svg).write(filename)
 		print("Rendered %s." % filename)
 
