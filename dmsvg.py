@@ -34,7 +34,7 @@ from xml.etree import ElementTree
 from io import BytesIO
 from base64 import b64encode
 from argparse import ArgumentParser
-from math import atan2, pi
+from math import atan2, pi, inf
 
 class DrawMap():
 	#
@@ -66,22 +66,26 @@ class DrawMap():
 		
 		# stash some useful line info for later
 		for num, line in enumerate(self.edit.linedefs):
-			vx_a = self.edit.vertexes[line.vx_a]
-			vx_b = self.edit.vertexes[line.vx_b]
-			
 			line.id = num
 			line.sector_front = self.edit.sidedefs[line.front].sector
 			if line.two_sided:
 				line.sector_back = self.edit.sidedefs[line.back].sector
 			else:
 				line.sector_back = -1
-				
-			line.point_top   = min(self.edit.vertexes[line.vx_a].y, self.edit.vertexes[line.vx_b].y)
-			line.point_left  = min(self.edit.vertexes[line.vx_a].x, self.edit.vertexes[line.vx_b].x)
-			line.point_right = max(self.edit.vertexes[line.vx_a].x, self.edit.vertexes[line.vx_b].x)
-				
-			# TODO: normalize vertices into same quadrant here?
-			line.angle = atan2(vx_b.x - vx_a.x, vx_b.y - vx_a.y) % (2 * pi)
+			
+			vx_a = self.edit.vertexes[line.vx_a]
+			vx_b = self.edit.vertexes[line.vx_b]
+			
+			line.point_top   = min(vx_a.y, vx_b.y)
+			line.point_left  = min(vx_a.x, vx_b.x)
+			
+			dy = vx_b.y - vx_a.y
+			dx = vx_b.x - vx_a.x
+			line.angle = atan2(dx, dy) % (2 * pi)
+			if dx != 0:
+				line.slope = abs(dy) / abs(dx)
+			else:
+				line.slope = inf
 			
 		#	print("line %d angle is %d" % (num, line.angle * 180 / pi))
 		
@@ -186,26 +190,23 @@ class DrawMap():
 		# sort by the following, in order:
 		# left-most vertex
 		# top-most vertex
-		# right-most vertex
-		# angle
-		return (line.point_left, line.point_top, -line.point_right, line.angle)
+		# slope
+		return (line.point_left, line.point_top, line.slope)
 	
 	def trace_lines(self, line, sector=None, visited=None):
 		if visited is None:
 			visited = []
 		
-		# how to get next line?
-		use_front = False
-		
 		# first, which sector are we looking at?
 		two_sided = line.two_sided
+		use_front = False
 		if line.angle > 0 and line.angle <= pi:
 			use_front = True
 		
 		sector = line.sector_front
 		if line.two_sided and not use_front:
 			sector = line.sector_back
-	#	print("\nvisiting sector %u, use_front = %s" % (sector, use_front))
+	#	print("visiting sector %u from line %u, use_front = %s" % (sector, line.id, use_front))
 		
 		last_vx = line.vx_b
 		
@@ -215,8 +216,6 @@ class DrawMap():
 			# find another line with other connected point, same sector
 			next_lines = self.lines_at_vertex[sector][last_vx]
 			next_lines = [other for other in next_lines if other not in visited]
-		#	next_lines.sort(key = lambda other: abs(line.angle - other.angle))
-		#	print("visiting line %d from (%d,%d) to (%d,%d)" % (line.id, self.edit.vertexes[line.vx_a].x, self.edit.vertexes[line.vx_a].y, self.edit.vertexes[line.vx_b].x, self.edit.vertexes[line.vx_b].y))
 			
 			if len(next_lines) == 0:
 				break
@@ -306,13 +305,6 @@ if __name__ == "__main__":
 	mapname  = args.map.upper()
 	
 	wad = WAD()
-	
-	# quick hack to support non-standard map names in omgifol 0.2
-	# (not required with my fork)
-	try:
-		omg.wad._mapheaders.append(mapname)
-	except AttributeError:
-		pass
 	
 	try:
 		wad.from_file(filename)
