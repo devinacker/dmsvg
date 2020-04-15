@@ -46,11 +46,7 @@ class DrawMap():
 	trans = False
 	
 	def __init__(self, wad, mapname):
-		from struct import error as StructError
-		try:
-			self.edit = MapEditor(wad.maps[mapname])
-		except StructError:
-			raise ValueError("Hexen / ZDoom maps are not currently supported")
+		self.edit = MapEditor(wad.maps[mapname])
 		
 		self.xmin = min([ v.x for v in self.edit.vertexes])
 		self.xmax = max([ v.x for v in self.edit.vertexes])
@@ -88,6 +84,31 @@ class DrawMap():
 				line.slope = inf
 			
 		#	print("line %d angle is %d" % (num, line.angle * 180 / pi))
+		
+		# group lines by sector and vertex for faster searching later
+		self.lines_at_vertex = [{} for s in self.edit.sectors]
+		self.lines_in_sector = [[] for s in self.edit.sectors]
+		def addline_sv(sector, vertex, line):
+			if vertex not in self.lines_at_vertex[sector]:
+				self.lines_at_vertex[sector][vertex] = []
+			self.lines_at_vertex[sector][vertex].append(line)
+		
+		def addline_s(sector, line):
+			addline_sv(sector, line.vx_a, line)
+			addline_sv(sector, line.vx_b, line)
+			self.lines_in_sector[sector].append(line)
+		
+		def addline(line):
+			if line.two_sided:
+				if line.sector_front != line.sector_back:
+					# ignore 2s lines w/ same sector on both sides
+					addline_s(line.sector_front, line)
+					addline_s(line.sector_back, line)
+			else:
+				addline_s(line.sector_front, line)
+		
+		for line in self.edit.linedefs:
+			addline(line)
 		
 		# initialize image
 		self.svg = ElementTree.Element('svg')
@@ -230,32 +251,7 @@ class DrawMap():
 		
 		return visited, sector
 	
-	def save(self, filename):
-		# group lines by sector and vertex for faster searching later
-		self.lines_at_vertex = [{} for s in self.edit.sectors]
-		self.lines_in_sector = [[] for s in self.edit.sectors]
-		def addline_sv(sector, vertex, line):
-			if vertex not in self.lines_at_vertex[sector]:
-				self.lines_at_vertex[sector][vertex] = []
-			self.lines_at_vertex[sector][vertex].append(line)
-		
-		def addline_s(sector, line):
-			addline_sv(sector, line.vx_a, line)
-			addline_sv(sector, line.vx_b, line)
-			self.lines_in_sector[sector].append(line)
-		
-		def addline(line):
-			if line.two_sided:
-				if line.sector_front != line.sector_back:
-					# ignore 2s lines w/ same sector on both sides
-					addline_s(line.sector_front, line)
-					addline_s(line.sector_back, line)
-			else:
-				addline_s(line.sector_front, line)
-		
-		for line in self.edit.linedefs:
-			addline(line)
-		
+	def save(self, filename):		
 		for lines_left in self.lines_in_sector:
 			lines_left.sort(key = self.linesort)
 			while len(lines_left) > 0:
