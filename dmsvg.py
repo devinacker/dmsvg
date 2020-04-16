@@ -43,15 +43,15 @@ class MapShape():
 		self.lines = lines
 		self.sector = sector
 		
-		box_top    = min([line.point_top   for line in lines])
-		box_left   = min([line.point_left  for line in lines])
-		box_bottom = max([line.point_right for line in lines])
-		box_right  = max([line.point_right for line in lines])
+		box_top    = min([line.point_top    for line in lines])
+		box_left   = min([line.point_left   for line in lines])
+		box_bottom = max([line.point_bottom for line in lines])
+		box_right  = max([line.point_right  for line in lines])
 		self.box = (box_top, box_left, box_bottom, box_right)
-		self.box_area = (box_bottom - box_top) * (box_right - box_left)
+		self.box_area = abs((box_bottom - box_top) * (box_right - box_left))
 
 	def __eq__(self, other):
-		return self.box == other.box and self.lines == other.lines
+		return self.sector == other.sector and self.box == other.box
 
 	def __lt__(self, other):
 		return self.box_area < other.box_area
@@ -109,8 +109,9 @@ class DrawMap():
 		#	print("line %d angle is %d" % (num, line.angle * 180 / pi))
 		
 		# group lines by sector and vertex for faster searching later
-		self.lines_at_vertex = [{} for s in self.edit.sectors]
-		self.lines_in_sector = [[] for s in self.edit.sectors]
+		# add one additional list for void space, which we'll index as -1
+		self.lines_in_sector = [[] for s in self.edit.sectors] + [[]]
+		self.lines_at_vertex = [{} for s in self.lines_in_sector]
 		def addline_sv(sector, vertex, line):
 			if vertex not in self.lines_at_vertex[sector]:
 				self.lines_at_vertex[sector][vertex] = []
@@ -122,13 +123,10 @@ class DrawMap():
 			self.lines_in_sector[sector].append(line)
 		
 		def addline(line):
-			if line.two_sided:
-				if line.sector_front != line.sector_back:
-					# ignore 2s lines w/ same sector on both sides
-					addline_s(line.sector_front, line)
-					addline_s(line.sector_back, line)
-			else:
+			if line.sector_front != line.sector_back:
+				# ignore 2s lines w/ same sector on both sides
 				addline_s(line.sector_front, line)
+				addline_s(line.sector_back, line)
 		
 		for line in self.edit.linedefs:
 			addline(line)
@@ -187,13 +185,25 @@ class DrawMap():
 			bg.attrib['stroke'] = self.fill # color the border too
 			bg.attrib['x'] = str(self.xmin - self.border)
 			bg.attrib['y'] = str(self.ymin - self.border)
-			bg.attrib['width'] = str(width)
-			bg.attrib['height'] = str(height)
+			bg.attrib['width'] = "100%"
+			bg.attrib['height'] = "100%"
+		else:
+			# mask for drawing void space
+			self.mask = ElementTree.SubElement(self.svg, 'mask')
+			self.mask.attrib['id'] = "void"
+			self.mask.attrib['fill'] = "black"
+			
+			mask_rect = ElementTree.SubElement(self.mask, 'rect')
+			mask_rect.attrib['fill'] = "white"
+			mask_rect.attrib['x'] = str(self.xmin - self.border)
+			mask_rect.attrib['y'] = str(self.ymin - self.border)
+			mask_rect.attrib['width'] = "100%"
+			mask_rect.attrib['height'] = "100%"
 
 	def draw_lines(self, shape):
 		if len(shape.lines) < 2:
 			return
-	
+		
 		flat = None
 		light = None
 		if shape.sector >= 0:
@@ -221,14 +231,17 @@ class DrawMap():
 				last_vx = vx_a
 		d += "z"
 		
-		path = ElementTree.SubElement(self.svg, 'path')
-		path.attrib['d'] = d
-		if flat:
-			path.attrib['fill'] = "url(#%s)" % flat
+		if not flat and not self.fill:
+			path = ElementTree.SubElement(self.mask, 'path')
+		else:
+			path = ElementTree.SubElement(self.svg, 'path')
+			if flat:
+				path.attrib['fill'] = "url(#%s)" % flat
 			if light:
 				path.attrib['filter'] = "url(#light%d)" % light
-		elif not self.fill:
-			path.attrib['fill'] = "rgba(0,0,0,0)"
+			if not self.fill:
+				path.attrib['mask'] = "url(#void)"
+		path.attrib['d'] = d
 	
 	def linesort(self, line):
 		# sort by the following, in order:
@@ -241,14 +254,10 @@ class DrawMap():
 		visited = []
 		
 		# first, which sector are we looking at?
-		two_sided = line.two_sided
-		use_front = False
+		sector = line.sector_back
 		if line.angle > 0 and line.angle <= pi:
-			use_front = True
+			sector = line.sector_front
 		
-		sector = line.sector_front
-		if line.two_sided and not use_front:
-			sector = line.sector_back
 	#	print("visiting sector %u from line %u, use_front = %s" % (sector, line.id, use_front))
 		
 		last_vx = line.vx_b
@@ -266,17 +275,12 @@ class DrawMap():
 			line = next_lines[0]
 			last_vx = line.vx_a if last_vx == line.vx_b else line.vx_b
 		
-		if not two_sided and not use_front:
-			# we used the front of this 1s line for finding adjacent lines,
-			# but don't use it for rendering empty space
-			sector = -1
-		
 		return MapShape(visited, sector)
 	
 	def save(self, filename):
 		shapes = []
 		
-		for lines_left in self.lines_in_sector:
+		for lines_left in self.lines_in_sector[:-1]:
 			lines_left.sort(key = self.linesort)
 			while len(lines_left) > 0:
 				try:
