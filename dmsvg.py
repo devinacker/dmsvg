@@ -47,14 +47,43 @@ class MapShape():
 		box_left   = min([line.point_left   for line in lines])
 		box_bottom = max([line.point_bottom for line in lines])
 		box_right  = max([line.point_right  for line in lines])
-		self.box = (box_top, box_left, box_bottom, box_right)
+		self.box = (box_left, box_top, box_right, box_bottom)
 		self.box_area = abs((box_bottom - box_top) * (box_right - box_left))
 
 	def __eq__(self, other):
-		return self.sector == other.sector and self.box == other.box
+		return self.box == other.box and set(self.lines) == set(other.lines)
 
 	def __lt__(self, other):
-		return self.box_area < other.box_area
+		return (self.box_area, len(self.lines)) < (other.box_area, len(other.lines))
+	
+	def contains_point(self, x, y):
+		intersections = 0
+		for line in self.lines:
+		#	print("checking (%d, %d) against line %d" % (x, y, line.id))
+			if x < line.point_right and line.point_top <= y <= line.point_bottom:
+				if line.slope == 0 or line.slope == inf:
+					# line is horizontal or vertical and we defintely intersect it
+					intersections += 1
+				else:
+					# y = m*x + b -> b = y - m*x
+					y1 = (line.slope * (x - line.point_left)) + line.point_top
+					if (line.slope > 0 and y1 <= y) or (line.slope < 0 and y1 >= y):
+						intersections += 1
+	#	print("found %d intersections" % intersections)
+		return intersections % 2 == 1
+	
+	def contains_line(self, line):
+		return line in self.lines \
+			or self.contains_point(line.point_left, line.point_top) \
+			or self.contains_point(line.point_right, line.point_bottom)
+	
+	def contains_shape(self, other):
+		if self.box_area < other.box_area \
+		or self.box[0] > other.box[0] or self.box[1] > other.box[1] \
+		or self.box[2] < other.box[2] or self.box[3] < other.box[3]:
+			return False
+		
+		return all([self.contains_line(line) for line in other.lines])
 
 class DrawMap():
 	#
@@ -102,7 +131,7 @@ class DrawMap():
 			dx = vx_b.x - vx_a.x
 			line.angle = atan2(dx, dy) % (2 * pi)
 			if dx != 0:
-				line.slope = abs(dy) / abs(dx)
+				line.slope = dy / dx
 			else:
 				line.slope = inf
 			
@@ -232,23 +261,34 @@ class DrawMap():
 		d += "z"
 		
 		if not flat and not self.fill:
-			path = ElementTree.SubElement(self.mask, 'path')
+			# add void space shapes to the mask
+			if all([not other.contains_shape(shape) for other in self.mask_shapes]):
+				path = ElementTree.SubElement(self.mask, 'path')
+				path.attrib['d'] = d
+				self.mask_shapes.append(shape)
+			#	print("adding void with lines", [line.id for line in shape.lines])
 		else:
 			path = ElementTree.SubElement(self.svg, 'path')
+			path.attrib['d'] = d
 			if flat:
 				path.attrib['fill'] = "url(#%s)" % flat
 			if light:
 				path.attrib['filter'] = "url(#light%d)" % light
 			if not self.fill:
 				path.attrib['mask'] = "url(#void)"
-		path.attrib['d'] = d
+				# if this shape is contained inside a mask shape then we may need to update the mask
+				if any([other.contains_shape(shape) for other in self.mask_shapes]):
+					mask_path = ElementTree.SubElement(self.mask, 'path')
+					mask_path.attrib['fill'] = "white"
+					mask_path.attrib['d'] = d
+				#	print("removing void with lines", [line.id for line in shape.lines])
 	
 	def linesort(self, line):
 		# sort by the following, in order:
 		# left-most vertex
 		# top-most vertex
 		# slope
-		return (line.point_left, line.point_top, line.slope)
+		return (line.point_left, line.point_top, abs(line.slope))
 	
 	def trace_lines(self, line):
 		visited = []
@@ -258,7 +298,7 @@ class DrawMap():
 		if line.angle > 0 and line.angle <= pi:
 			sector = line.sector_front
 		
-	#	print("visiting sector %u from line %u, use_front = %s" % (sector, line.id, use_front))
+	#	print("visiting sector %u from line %u with angle %d" % (sector, line.id, line.angle * 180 / pi))
 		
 		last_vx = line.vx_b
 		
@@ -272,6 +312,7 @@ class DrawMap():
 			if len(next_lines) == 0:
 				break
 			
+			next_lines.sort(reverse = True, key = lambda l: l.slope)
 			line = next_lines[0]
 			last_vx = line.vx_a if last_vx == line.vx_b else line.vx_b
 		
@@ -279,6 +320,7 @@ class DrawMap():
 	
 	def save(self, filename):
 		shapes = []
+		self.mask_shapes = []
 		
 		for lines_left in self.lines_in_sector[:-1]:
 			lines_left.sort(key = self.linesort)
