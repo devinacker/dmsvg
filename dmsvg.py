@@ -295,12 +295,18 @@ class DrawMap():
 		
 		# first, which sector are we looking at?
 		sector = line.sector_back
+		last_vx = line.vx_a
 		if line.angle > 0 and line.angle <= pi:
 			sector = line.sector_front
+			last_vx = line.vx_b
 		
-	#	print("visiting sector %u from line %u with angle %d" % (sector, line.id, line.angle * 180 / pi))
+		if len(self.lines_at_vertex[sector][last_vx]) <= 1:
+			# go in the other direction if we're about to start on a dangling line
+			# (i.e. in an unclosed sector)
+			last_vx = line.vx_a if last_vx == line.vx_b else line.vx_b
+		first_line_vx = (line.vx_a, line.vx_b)
 		
-		last_vx = line.vx_b
+	#	print("visiting sector %u from line %u with angle %d, vertices %d and %d" % (sector, line.id, line.angle * 180 / pi, line.vx_a, line.vx_b))
 		
 		while True:
 			visited.append(line)
@@ -310,11 +316,14 @@ class DrawMap():
 			next_lines = [other for other in next_lines if other not in visited]
 			
 			if len(next_lines) == 0:
+				if sector >= 0 and len(set(first_line_vx + (line.vx_a, line.vx_b))) > 3:
+					print("WARNING: unclosed shape in sector %d" % sector)
 				break
 			
 			next_lines.sort(reverse = True, key = lambda l: l.slope)
 			line = next_lines[0]
 			last_vx = line.vx_a if last_vx == line.vx_b else line.vx_b
+		#	print("\tnow we're at line %u with angle %d, vertices %d and %d" % (line.id, line.angle * 180 / pi, line.vx_a, line.vx_b))
 		
 		return MapShape(visited, sector)
 	
@@ -322,9 +331,9 @@ class DrawMap():
 		shapes = []
 		self.mask_shapes = []
 		
-		for lines_left in self.lines_in_sector[:-1]:
+		for num, lines_left in enumerate(self.lines_in_sector[:-1]):
 			lines_left.sort(key = self.linesort)
-			while len(lines_left) > 0:
+			while len(lines_left) > 2:
 				try:
 					shape = self.trace_lines(lines_left[0])
 					if shape not in shapes:
