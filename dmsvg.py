@@ -28,6 +28,7 @@
 """
 
 from omg import *
+from omg import playpal
 from sys import argv, stderr, exit
 from PIL import Image
 from xml.etree import ElementTree
@@ -170,10 +171,16 @@ class DrawMap():
 			self.svg.attrib['fill'] = self.fill
 
 		# define patterns for all flats in map
+		try:
+			colorpal = playpal.Playpal(wad.data['PLAYPAL']).palettes[0]
+		except KeyError:
+			colorpal = palette.default
+		
 		defs = ElementTree.SubElement(self.svg, 'defs')
 		floors = set([s.tx_floor for s in self.edit.sectors])
 		for f in floors:
 			try:
+				wad.flats[f].palette = colorpal
 				img = wad.flats[f].to_Image()
 				img_data = BytesIO()
 				img.save(img_data, "png")
