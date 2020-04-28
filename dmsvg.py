@@ -35,50 +35,84 @@ from xml.etree import ElementTree
 from io import BytesIO
 from base64 import b64encode
 from argparse import ArgumentParser
-from math import atan2, pi, inf
+from math import acos, atan2, pi, inf
 
 class MapShape():
 	# store a shape and its approximate size, so we can draw largest ones first
 	# and also eliminate duplicate shapes in case we end up tracing something twice
-	def __init__(self, lines, sector):
+	def __init__(self, lines):
 		self.lines = lines
-		self.sector = sector
+	
+		# to determine what sector we're in, draw a ray from the "center" (avg. midpoint)
+		# of this shape and check the angle of the first line it intersects
+		cy = (sum([line.point_top    for line in lines]) + \
+		      sum([line.point_bottom for line in lines])) \
+		     / (len(lines) * 2)
 		
+		test_lines = lines[:]
+	#	print([line.id for line in test_lines])
+	#	print("center y is", cy)
+		test_lines.sort(key = lambda line: self.point_meets_line((-inf, cy), line))
+		hit_line = test_lines[0]
+		self.sector = -1	
+	#	print("hit line %d at x = %f" % (hit_line.id, self.point_meets_line((-inf, cy), hit_line)))
+		if ((hit_line.angle < pi) ^ (hit_line.slope > 0)) or hit_line.slope == 0:
+			self.sector = hit_line.sector_front
+		else:
+			self.sector = hit_line.sector_back
+	#	print("shape looks like it's in sector", self.sector)
+		
+		# bounding box for ordering shapes by size and position
 		box_top    = min([line.point_top    for line in lines])
 		box_left   = min([line.point_left   for line in lines])
 		box_bottom = max([line.point_bottom for line in lines])
 		box_right  = max([line.point_right  for line in lines])
 		self.box = (box_left, box_top, box_right, box_bottom)
 		self.box_area = abs((box_bottom - box_top) * (box_right - box_left))
-
+		
 	def __eq__(self, other):
-		return self.box == other.box and set(self.lines) == set(other.lines)
+		return self.box == other.box and self.sector == other.sector and set(self.lines) == set(other.lines)
 
 	def __lt__(self, other):
-		return (self.box_area, len(self.lines)) < (other.box_area, len(other.lines))
+		return self.box_area < other.box_area
 	
-	def contains_point(self, x, y):
+	def point_meets_line(self, point, line):
+		# that is, does a line from (point.x, point.y) to (inf, point.y) intersect line
+		# used for point-in-polygon checks and determining inner sector
+		x, y = point
+		if x < line.point_right and line.point_top <= y < line.point_bottom:
+			if line.slope == 0 or line.slope == inf:
+				# line is horizontal or vertical and we defintely intersect it
+				return line.point_left
+			else:
+				# y = m*x + b -> b = y - m*x
+				y1 = (line.slope * (x - line.point_left)) + line.point_top
+				if (line.slope > 0 and y1 <= y):
+					return ((y - line.point_top) / line.slope) + line.point_left
+				elif (line.slope < 0 and y1 >= y):
+					return ((y - line.point_bottom) / line.slope) + line.point_left
+		return inf
+	
+	def contains_point(self, point):
 		intersections = 0
 		for line in self.lines:
 		#	print("checking (%d, %d) against line %d" % (x, y, line.id))
-			if x < line.point_right and line.point_top <= y <= line.point_bottom:
-				if line.slope == 0 or line.slope == inf:
-					# line is horizontal or vertical and we defintely intersect it
-					intersections += 1
-				else:
-					# y = m*x + b -> b = y - m*x
-					y1 = (line.slope * (x - line.point_left)) + line.point_top
-					if (line.slope > 0 and y1 <= y) or (line.slope < 0 and y1 >= y):
-						intersections += 1
+			if point in (line.point_a, line.point_b):
+			#	print("point is on a vertex")
+				return True
+			if self.point_meets_line(point, line) < inf:
+				intersections += 1
 	#	print("found %d intersections" % intersections)
 		return intersections % 2 == 1
 	
 	def contains_line(self, line):
+	#	print("checking line %d in sector %d" % (line.id, self.sector))
 		return line in self.lines \
-			or self.contains_point(line.point_left, line.point_top) \
-			or self.contains_point(line.point_right, line.point_bottom)
+			or self.contains_point((line.point_left, line.point_top)) \
+			or self.contains_point((line.point_right, line.point_bottom))
 	
 	def contains_shape(self, other):
+	#	print("checking sector %d in sector %d" % (other.sector, self.sector))
 		if self.box_area < other.box_area \
 		or self.box[0] > other.box[0] or self.box[1] > other.box[1] \
 		or self.box[2] < other.box[2] or self.box[3] < other.box[3]:
@@ -127,16 +161,25 @@ class DrawMap():
 			line.point_bottom = max(vx_a.y, vx_b.y)
 			line.point_left   = min(vx_a.x, vx_b.x)
 			line.point_right  = max(vx_a.x, vx_b.x)
+			line.point_a = (vx_a.x, vx_a.y)
+			line.point_b = (vx_b.x, vx_b.y)
+			line.point_cx = (vx_a.x + vx_b.x) / 2
+			line.point_cy = (vx_a.y + vx_b.y) / 2
 			
 			dy = vx_b.y - vx_a.y
 			dx = vx_b.x - vx_a.x
 			line.angle = atan2(dx, dy) % (2 * pi)
 			if dx != 0:
 				line.slope = dy / dx
+				if line.slope >= 0:
+					line.first_vx = line.vx_a if vx_a.x < vx_b.x else line.vx_b
+				else:
+					line.first_vx = line.vx_a if vx_a.x > vx_b.x else line.vx_b
 			else:
 				line.slope = inf
-			
-		#	print("line %d angle is %d" % (num, line.angle * 180 / pi))
+				line.first_vx = line.vx_a if vx_a.y < vx_b.y else line.vx_b
+			line.length = ((dy * dy) + (dx * dx)) ** 0.5			
+		#	print("line %d length is %d angle is %d slope is %f first vx is %d" % (num, line.length, line.angle * 180 / pi, line.slope, line.first_vx))
 		
 		# group lines by sector and vertex for faster searching later
 		# add one additional list for void space, which we'll index as -1
@@ -269,11 +312,10 @@ class DrawMap():
 		
 		if not flat and not self.fill:
 			# add void space shapes to the mask
-			if all([not other.contains_shape(shape) for other in self.mask_shapes]):
-				path = ElementTree.SubElement(self.mask, 'path')
-				path.attrib['d'] = d
-				self.mask_shapes.append(shape)
-			#	print("adding void with lines", [line.id for line in shape.lines])
+			path = ElementTree.SubElement(self.mask, 'path')
+			path.attrib['d'] = d
+			self.mask_shapes.append(shape)
+		#	print("adding void with lines", [line.id for line in shape.lines])
 		else:
 			path = ElementTree.SubElement(self.svg, 'path')
 			path.attrib['d'] = d
@@ -290,23 +332,31 @@ class DrawMap():
 					mask_path.attrib['d'] = d
 				#	print("removing void with lines", [line.id for line in shape.lines])
 	
-	def linesort(self, line):
-		# sort by the following, in order:
-		# left-most vertex
-		# top-most vertex
-		# slope
-		return (line.point_left, line.point_top, abs(line.slope))
+	def inner_angle(self, lineA, lineB):
+		# interior angle between two linedefs
+	#	print("inner_angle(%d, %d)" % (lineA.id, lineB.id))
+		angle = pi
+		if (lineA.angle % pi) != (lineB.angle % pi):
+			point1 = lineA.vx_b if lineA.vx_a in (lineB.vx_a, lineB.vx_b) else lineA.vx_a
+			point2 = lineB.vx_b if lineB.vx_a in (lineA.vx_a, lineA.vx_b) else lineB.vx_a
+			vx_a = self.edit.vertexes[point1]
+			vx_b = self.edit.vertexes[point2]
+			dy = vx_b.y - vx_a.y
+			dx = vx_b.x - vx_a.x
+			lenC = ((dy * dy) + (dx * dx)) ** 0.5
+			lenA = lineA.length
+			lenB = lineB.length
+			x = (lenA*lenA + lenB*lenB - lenC*lenC)/(2 * lenA * lenB)
+			if -1.0 <= x <= 1.0:
+				angle = acos(x) % pi
+			
+	#	print("angle between lines %d and %d is %f" % (lineA.id, lineB.id, angle * 180 / pi))
+		return angle
 	
-	def trace_lines(self, line):
+	def trace_lines(self, line, sector):
 		visited = []
 		
-		# first, which sector are we looking at?
-		sector = line.sector_back
-		last_vx = line.vx_a
-		if line.angle > 0 and line.angle <= pi:
-			sector = line.sector_front
-			last_vx = line.vx_b
-		
+		last_vx = line.vx_b if sector == line.sector_front else line.vx_a
 		if len(self.lines_at_vertex[sector][last_vx]) <= 1:
 			# go in the other direction if we're about to start on a dangling line
 			# (i.e. in an unclosed sector)
@@ -326,32 +376,43 @@ class DrawMap():
 				if sector >= 0 and len(set(first_line_vx + (line.vx_a, line.vx_b))) > 3:
 					print("WARNING: unclosed shape in sector %d" % sector)
 				break
-			
-			next_lines.sort(reverse = True, key = lambda l: l.slope)
+				
+			next_lines.sort(key = lambda other: self.inner_angle(line, other))
 			line = next_lines[0]
 			last_vx = line.vx_a if last_vx == line.vx_b else line.vx_b
 		#	print("\tnow we're at line %u with angle %d, vertices %d and %d" % (line.id, line.angle * 180 / pi, line.vx_a, line.vx_b))
 		
-		return MapShape(visited, sector)
+		return MapShape(visited)
 	
 	def save(self, filename):
 		shapes = []
 		self.mask_shapes = []
 		
+		linesort = lambda line: (line.point_top, line.point_cx)
 		for num, lines_left in enumerate(self.lines_in_sector[:-1]):
-			lines_left.sort(key = self.linesort)
+		#	print("checking out lines in sector", num)
+			lines_left.sort(key = linesort)
 			while len(lines_left) > 2:
-				try:
-					shape = self.trace_lines(lines_left[0])
-					if shape not in shapes:
-						shapes.append(shape)
-					for line in shape.lines:
-						if line in lines_left:
-							lines_left.remove(line)
-							
-				except KeyboardInterrupt:
-					print("\nRendering canceled.")
-					exit(-1)
+				shape = self.trace_lines(lines_left[0], num)
+				if shape not in shapes:
+					shapes.append(shape)
+				for line in shape.lines:
+					if line in lines_left:
+						lines_left.remove(line)
+					if line in self.lines_in_sector[shape.sector]:
+						self.lines_in_sector[shape.sector].remove(line)
+		# lame hack to fix up any void space that we didn't already trace before
+		lines_left = self.lines_in_sector[-1]
+		lines_left.sort(key = linesort)
+		while len(lines_left) > 2:
+			shape = self.trace_lines(lines_left[0], -1)
+		#	print("Found a void shape, looks like sector %d, box %s" % (shape.sector, shape.box))
+		#	print("\t", [line.id for line in shape.lines])
+			if shape.sector == -1 and shape not in shapes:
+				shapes.append(shape)
+			for line in shape.lines:
+				if line in lines_left:
+					lines_left.remove(line)
 		
 		# draw shapes largest to smallest
 		shapes.sort(reverse = True)
