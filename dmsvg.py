@@ -85,22 +85,23 @@ class MapShape():
 				# line is horizontal or vertical and we defintely intersect it
 				return line.point_left
 			else:
-				# y = m*x + b -> b = y - m*x
-				y1 = (line.slope * (x - line.point_left)) + line.point_top
-				if (line.slope > 0 and y1 <= y):
-					return ((y - line.point_top) / line.slope) + line.point_left
-				elif (line.slope < 0 and y1 >= y):
-					return ((y - line.point_bottom) / line.slope) + line.point_left
+				if line.slope > 0:
+					x = ((y - line.point_top) / line.slope) + line.point_left
+				else:
+					x = ((y - line.point_bottom) / line.slope) + line.point_left
+				if line.point_left <= x <= line.point_right:
+					return x
 		return inf
 	
 	def contains_point(self, point):
 		intersections = 0
 		for line in self.lines:
-		#	print("checking (%d, %d) against line %d" % (x, y, line.id))
+		#	print("checking (%d, %d) against line %d" % (*point, line.id))
 			if point in (line.point_a, line.point_b):
-			#	print("point is on a vertex")
+			#	print("point (%d, %d) is on a vertex" % point)
 				return True
 			if self.point_meets_line(point, line) < inf:
+			#	print("(%d, %d) intersected line %d" % (*point, line.id))
 				intersections += 1
 	#	print("found %d intersections" % intersections)
 		return intersections % 2 == 1
@@ -108,8 +109,8 @@ class MapShape():
 	def contains_line(self, line):
 	#	print("checking line %d in sector %d" % (line.id, self.sector))
 		return line in self.lines \
-			or self.contains_point((line.point_left, line.point_top)) \
-			or self.contains_point((line.point_right, line.point_bottom))
+			or self.contains_point(line.point_a) \
+			or self.contains_point(line.point_b)
 	
 	def contains_shape(self, other):
 	#	print("checking sector %d in sector %d" % (other.sector, self.sector))
