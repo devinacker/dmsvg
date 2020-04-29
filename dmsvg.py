@@ -258,6 +258,7 @@ class DrawMap():
 			funcG.attrib = funcR.attrib
 			funcB.attrib = funcR.attrib
 
+		self.paths = ElementTree.SubElement(self.svg, 'g')
 		# add opaque background if specified
 		if self.fill:
 			bg = ElementTree.SubElement(self.svg, 'rect')
@@ -271,6 +272,7 @@ class DrawMap():
 			self.mask = ElementTree.SubElement(self.svg, 'mask')
 			self.mask.attrib['id'] = "void"
 			self.mask.attrib['fill'] = "black"
+			self.paths.attrib['mask'] = "url(#void)"
 			
 			mask_rect = ElementTree.SubElement(self.mask, 'rect')
 			mask_rect.attrib['fill'] = "white"
@@ -317,14 +319,13 @@ class DrawMap():
 			self.mask_shapes.append(shape)
 		#	print("adding void with lines", [line.id for line in shape.lines])
 		else:
-			path = ElementTree.SubElement(self.svg, 'path')
+			path = ElementTree.SubElement(self.paths, 'path')
 			path.attrib['d'] = d
 			if flat:
 				path.attrib['fill'] = "url(#%s)" % flat
 			if light:
 				path.attrib['filter'] = "url(#light%d)" % light
 			if not self.fill:
-				path.attrib['mask'] = "url(#void)"
 				# if this shape is contained inside a mask shape then we may need to update the mask
 				if any([other.contains_shape(shape) for other in self.mask_shapes]):
 					mask_path = ElementTree.SubElement(self.mask, 'path')
