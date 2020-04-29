@@ -258,7 +258,6 @@ class DrawMap():
 			funcG.attrib = funcR.attrib
 			funcB.attrib = funcR.attrib
 
-		self.paths = ElementTree.SubElement(self.svg, 'g')
 		# add opaque background if specified
 		if self.fill:
 			bg = ElementTree.SubElement(self.svg, 'rect')
@@ -267,11 +266,16 @@ class DrawMap():
 			bg.attrib['y'] = str(self.ymin - self.border)
 			bg.attrib['width'] = "100%"
 			bg.attrib['height'] = "100%"
+			
+			# don't need a group, just add paths directly to the document
+			self.paths = self.svg
 		else:
 			# mask for drawing void space
 			self.mask = ElementTree.SubElement(self.svg, 'mask')
 			self.mask.attrib['id'] = "void"
 			self.mask.attrib['fill'] = "black"
+			
+			self.paths = ElementTree.SubElement(self.svg, 'g')
 			self.paths.attrib['mask'] = "url(#void)"
 			
 			mask_rect = ElementTree.SubElement(self.mask, 'rect')
