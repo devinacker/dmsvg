@@ -172,15 +172,10 @@ class DrawMap():
 			line.angle = atan2(dx, dy) % (2 * pi)
 			if dx != 0:
 				line.slope = dy / dx
-				if line.slope >= 0:
-					line.first_vx = line.vx_a if vx_a.x < vx_b.x else line.vx_b
-				else:
-					line.first_vx = line.vx_a if vx_a.x > vx_b.x else line.vx_b
 			else:
 				line.slope = inf
-				line.first_vx = line.vx_a if vx_a.y < vx_b.y else line.vx_b
 			line.length = ((dy * dy) + (dx * dx)) ** 0.5			
-		#	print("line %d length is %d angle is %d slope is %f first vx is %d" % (num, line.length, line.angle * 180 / pi, line.slope, line.first_vx))
+		#	print("line %d length is %d angle is %d slope is %f" % (num, line.length, line.angle * 180 / pi, line.slope))
 		
 		# group lines by sector and vertex for faster searching later
 		# add one additional list for void space, which we'll index as -1
